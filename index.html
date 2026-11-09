@@ -2041,13 +2041,19 @@ function App(){
     const over55=age>=55;
     let yrs55=0; if(over55&&s.dob){ const d=new Date(s.dob), b55=new Date(d.getFullYear()+55,d.getMonth(),d.getDate()); yrs55=Math.max(0,(Date.now()-b55)/(365.25*864e5)); }
     const ra55est=over55?raAt55Estimate(s.cpfSA,yrs55):0;
+    const [BRS0,FRS0]=cpfRS(byear+55);
+    // Over 55 with a property pledge: CPF lets the member withdraw RA savings down to the BRS, but the amount
+    // excludes interest earned, government grants and top-ups (cpf.gov.sg). So only the RA formed at 55
+    // (up to the FRS) above the BRS can come out; interest since 55 and any top-ups stay in the RA.
+    const pledgeRA=over55&&ra55est>=BRS0?Math.max(0,Math.min(ra55est,FRS0)-BRS0):0;
+    const pledgeOn=s.cpfPledge==="Yes", raAfter=over55&&pledgeOn?s.cpfSA-pledgeRA:s.cpfSA;
     const ytr=Math.max(s.retirementAge-age,0);
     const N=Math.min(65,Math.max(30,100-age));
     const inf=s.inflation/100;
     // CPF
     const topMap={};
-    const baseP={age0:age,byear,oa:s.cpfOA,sa:s.cpfSA,ma:s.cpfMA,salary:s.salary,housingMo:s.housingMo,
-      housingYrs:s.housingYrs,useFullOA:false,workUntil:s.retirementAge,pledge:s.cpfPledge==="Yes",endAge:95,ra55est:over55?ra55est:null};
+    const baseP={age0:age,byear,oa:s.cpfOA,sa:raAfter,ma:s.cpfMA,salary:s.salary,housingMo:s.housingMo,
+      housingYrs:s.housingYrs,useFullOA:false,workUntil:s.retirementAge,pledge:pledgeOn,endAge:95,ra55est:over55?ra55est-(pledgeOn?pledgeRA:0):null};
     const proj=cpfProject({...baseP,topups:topMap});
     const projNoTop=Object.keys(topMap).length?cpfProject({...baseP,topups:{}}):proj;
     const f0=(proj.rows[0]&&proj.rows[0].flow)||{};
@@ -2064,10 +2070,10 @@ function App(){
     const raTop=Math.max(0,proj.ra55eq-projNoTop.ra55eq);   // extra RA at 55 created by top-ups
     const ra=basis==="ACTUAL"?actEq:Math.min(ERS,raBasis+raTop);
     const rsNow=cpfRS(new Date().getFullYear()), ersNow=rsNow[2];
-    const pledgeWithdraw=over55&&ra55est>0?Math.max(0,s.cpfSA-BRS*(s.cpfSA/ra55est)):0;
+    const pledgeWithdraw=pledgeRA;
     const cpfMo=cpfPayout(ra,s.cpfPlan,s.cpfPayoutAge);
     const cpfMoNoTop=cpfPayout(raBasis,s.cpfPlan,s.cpfPayoutAge);
-    const matrix=[...(over55?[["ACTUAL","Client's RA",actEqNoTop]]:[]),["BRS","Basic Retirement Sum",BRS],
+    const matrix=[...(over55?[["ACTUAL",pledgeOn?"Client's RA after pledge":"Client's RA",actEqNoTop]]:[]),["BRS","Basic Retirement Sum",BRS],
       ["FRS","Full Retirement Sum",FRS],["ERS","Enhanced Retirement Sum",ERS]]
       .map(([key,label,amt])=>({key,label,amt,Basic:cpfPayout(amt,"Basic",s.cpfPayoutAge),
         Standard:cpfPayout(amt,"Standard",s.cpfPayoutAge),Escalating:cpfPayout(amt,"Escalating",s.cpfPayoutAge)}));
@@ -2108,7 +2114,7 @@ function App(){
     const toAge=Math.min(age+N,Math.max(age+1,s.totalsToAge));
     const tr=rows.find(r=>r.age===toAge);
     const eraReturn=tr.cumEra+tr.eraV-invested;
-    return {rsNow,basis,pledgeWithdraw,raPayNow,ra55est,yrs55,ersNow,age,byear,over55,ytr,N,inf,rr,iy,proj,projNoTop,interest,contrib,BRS,FRS,ERS,ra,cpfMo,cpfMoNoTop,raBasis,raTop,matrix,tuTotal,tuAsked,topMap,
+    return {rsNow,basis,pledgeWithdraw,pledgeRA,raAfter,raPayNow,ra55est,yrs55,ersNow,age,byear,over55,ytr,N,inf,rr,iy,proj,projNoTop,interest,contrib,BRS,FRS,ERS,ra,cpfMo,cpfMoNoTop,raBasis,raTop,matrix,tuTotal,tuAsked,topMap,
       mkt,mktAnnual,sp,mktAccum,spAccum,invested,annLife,mktTotal,unalloc,rows,requiredAtRet,iyr,ir,gap,gapStatus,viewAge,vr,toAge,tr,eraReturn};
   },[s]);
 
@@ -2567,10 +2573,10 @@ function App(){
               sub={`RA today ${S(s.cpfSA,0)} · BRS ${S(c.BRS,0)} · FRS ${S(c.FRS,0)}${s.cpfSA<c.FRS?` · ${S(c.FRS-s.cpfSA,0)} short of the FRS`:""}`}/>
             <Big k="Can withdraw now" v={S(s.cpfSA>=c.FRS?s.cpfOA:Math.min(5000,s.cpfOA+s.cpfSA),0)} tone="gold" hero
               sub={s.cpfSA>=c.FRS?"FRS set aside, so the OA balance can be withdrawn":"FRS not met: up to $5,000, unless a property pledge is made"}/>
-            <Big k="With a property pledge" v={S(s.cpfSA>=c.BRS?s.cpfOA+(s.cpfSA-c.BRS):Math.min(5000,s.cpfOA+s.cpfSA),0)}
-              sub={s.cpfSA>=c.BRS?`OA ${S(s.cpfOA,0)} + RA above the BRS (${S(s.cpfSA-c.BRS,0)}). Only the BRS of ${S(c.BRS,0)} stays in the RA; must apply, lease to age 95`:"BRS not met, so the pledge does not help"}/>
+            <Big k="With a property pledge" v={S(c.ra55est>=c.BRS?s.cpfOA+c.pledgeRA:Math.min(5000,s.cpfOA+s.cpfSA),0)}
+              sub={c.ra55est>=c.BRS?`OA ${S(s.cpfOA,0)} + RA set aside at 55 above the BRS (${S(Math.min(c.ra55est,c.FRS),0)} − ${S(c.BRS,0)} = ${S(c.pledgeRA,0)}). Interest since 55 and top-ups stay in the RA; must apply, lease to age 95`:"BRS not met at 55, so the pledge does not help"}/>
           </div>
-          <div className="note">Status compares the RA today with the retirement sums for the year the client turned 55. Members can always withdraw up to $5,000 from 55. Savings in the OA can be withdrawn once the cohort FRS is set aside in the RA. A property pledge is not automatic: the client must apply, the property's remaining lease must last to at least age 95, and it lets them keep only the BRS (half the FRS) in the RA and withdraw the RA savings above it, on top of their OA. The amount CPF allows also depends on the property's value, any outstanding loan and co-owners' shares. If the property is sold later, the amount withdrawn must be refunded to restore the RA to the FRS. Withdrawal figures are estimates; the exact amount, including any $5,000 already withdrawn, is on the client's CPF dashboard.</div>
+          <div className="note">Status compares the RA today with the retirement sums for the year the client turned 55. Members can always withdraw up to $5,000 from 55. Savings in the OA can be withdrawn once the cohort FRS is set aside in the RA. A property pledge is not automatic: the client must apply, the property's remaining lease must last to at least age 95, and it lets them withdraw RA savings down to the BRS (half the FRS), on top of their OA. CPF excludes interest earned, government grants and top-ups from this withdrawal, so for a client who set aside the FRS at 55 the RA part is the FRS less the BRS, and the interest earned since 55 stays in the RA. The RA at 55 is estimated from today's balance and age. The amount CPF allows also depends on the property's value, any outstanding loan and co-owners' shares. If the property is sold later, the amount withdrawn must be refunded to restore the RA to the FRS. Withdrawal figures are estimates; the exact amount, including any $5,000 already withdrawn, is on the client's CPF dashboard.</div>
         </Card>)}
 
         <Card>
@@ -2601,16 +2607,16 @@ function App(){
         <Card>
           <CardHead>CPF LIFE payouts</CardHead>
           <div className="form-body">
-            <Field label="Payouts based on"><Sel value={c.basis} onChange={upd(c.over55?"cpfBasis55":"cpfBasis")} options={[...(c.over55?[{value:"ACTUAL",label:`Client's RA (${S(s.cpfSA,0)})`}]:[]),{value:"BRS",label:`BRS (${S(c.BRS,0)})`},{value:"FRS",label:`FRS (${S(c.FRS,0)})`},{value:"ERS",label:`ERS (${S(c.ERS,0)})`}]}/></Field>
+            <Field label="Payouts based on"><Sel value={c.basis} onChange={upd(c.over55?"cpfBasis55":"cpfBasis")} options={[...(c.over55?[{value:"ACTUAL",label:s.cpfPledge==="Yes"?`Client's RA after pledge (${S(c.raAfter,0)})`:`Client's RA (${S(s.cpfSA,0)})`}]:[]),{value:"BRS",label:`BRS (${S(c.BRS,0)})`},{value:"FRS",label:`FRS (${S(c.FRS,0)})`},{value:"ERS",label:`ERS (${S(c.ERS,0)})`}]}/></Field>
             <Field label="CPF LIFE plan"><Sel value={s.cpfPlan} onChange={upd("cpfPlan")} options={["Standard","Basic","Escalating"]}/></Field>
             <Field label="Payouts start at"><Sel value={s.cpfPayoutAge} onChange={v=>upd("cpfPayoutAge")(parseInt(v))} options={[65,66,67,68,69,70].map(a=>({value:a,label:`Age ${a}`}))}/></Field>
-            <Toggle on={s.cpfPledge==="Yes"} onClick={()=>{const on=s.cpfPledge!=="Yes"; setS(q=>({...q,cpfPledge:on?"Yes":"No",[c.over55?"cpfBasis55":"cpfBasis"]:on?"BRS":(c.over55?"ACTUAL":"FRS")}));}} label="Property pledge (keep only the BRS in the RA)"/>
+            <Toggle on={s.cpfPledge==="Yes"} onClick={()=>{const on=s.cpfPledge!=="Yes"; setS(q=>({...q,cpfPledge:on?"Yes":"No",[c.over55?"cpfBasis55":"cpfBasis"]:c.over55?"ACTUAL":(on?"BRS":"FRS")}));}} label="Property pledge (keep only the BRS in the RA)"/>
             <Toggle on={s.includeCPF} onClick={()=>upd("includeCPF")(!s.includeCPF)} label="Include CPF LIFE in the income projection"/>
           </div>
           <div className="hero-box">
             <div className="hero-key">Estimated CPF LIFE payout from age {s.cpfPayoutAge} / month</div>
             <div className="hero-val" style={{color:TXT.cpf}}>{S(c.cpfMo,0)}</div>
-            <div className="hero-sub">{s.cpfPlan} plan · {c.basis==="ACTUAL"?`client's RA, ${S(s.cpfSA,0)} today, projected ${S(c.raPayNow,0)} at ${s.cpfPayoutAge}`:`${c.basis} of ${S(c.ra,0)} set aside at 55`}{s.cpfPlan==="Escalating"?" · rises 2% every year":""}</div>
+            <div className="hero-sub">{s.cpfPlan} plan · {c.basis==="ACTUAL"?`client's RA${s.cpfPledge==="Yes"?" after the pledge":""}, ${S(c.raAfter,0)} today, projected ${S(c.raPayNow,0)} at ${s.cpfPayoutAge}`:`${c.basis} of ${S(c.ra,0)} set aside at 55`}{s.cpfPlan==="Escalating"?" · rises 2% every year":""}</div>
           </div>
           <div className="sub-head">Compare every combination · tap a cell to use it</div>
           <div className="matrix-wrap"><table className="flat-table matrix">
@@ -2636,7 +2642,8 @@ function App(){
             </BarChart>
           </ChartBox>
           {s.cpfPledge==="Yes"&&<div className="notice">{c.over55
-            ?`Property pledge on: the client keeps only the BRS (${S(c.BRS,0)} for the ${c.byear+55} cohort) in the RA and can withdraw the rest, about ${S(c.pledgeWithdraw,0)} today. CPF LIFE payouts are then based on the BRS, so they are lower.`
+            ?(c.pledgeRA>0?`Property pledge on: the client can withdraw about ${S(c.pledgeRA,0)} from the RA, which is the RA set aside at 55 (up to the FRS of ${S(c.FRS,0)}) above the BRS of ${S(c.BRS,0)} for the ${c.byear+55} cohort. CPF excludes interest earned, government grants and top-ups from this withdrawal, so they stay in the RA: about ${S(c.raAfter,0)} remains today, and CPF LIFE is based on that. The RA at 55 is estimated from today's balance and age; contributions or top-ups since 55 are not known, and CPF confirms the exact amount when the client applies.`
+              :`Property pledge on: the RA set aside at 55 (estimated at ${S(c.ra55est,0)}) was not above the BRS of ${S(c.BRS,0)}, so the pledge does not release any RA savings. CPF LIFE stays based on the client's own RA.`)
             :`Property pledge on: only the BRS of ${S(c.BRS,0)} is kept in the RA at 55, so CPF LIFE pays less each month, and about ${S(c.proj.at55?c.proj.at55.withdrawable:0,0)} can be withdrawn as cash at 55. Without a pledge, the FRS of ${S(c.FRS,0)} must be set aside first.`}</div>}
           {s.cpfPledge==="No"&&c.basis==="BRS"&&<div className="notice">Keeping only the BRS in the RA needs a property pledge; without one, the FRS must be set aside first.</div>}
         </Card>
